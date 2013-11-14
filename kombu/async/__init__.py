@@ -8,8 +8,9 @@ Event loop implementation.
 """
 from __future__ import absolute_import
 
-from .hub import Hub, get_event_loop, set_event_loop
+from .hub import Hub, coroutine, get_event_loop, set_event_loop
 
 from kombu.utils.eventio import READ, WRITE, ERR
 
-__all__ = ['READ', 'WRITE', 'ERR', 'Hub', 'get_event_loop', 'set_event_loop']
+__all__ = ['READ', 'WRITE', 'ERR',
+           'Hub', 'coroutine', 'get_event_loop', 'set_event_loop']

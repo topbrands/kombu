@@ -12,6 +12,7 @@ import errno
 
 from collections import deque
 from contextlib import contextmanager
+from functools import wraps
 from time import sleep
 from types import GeneratorType as generator
 
@@ -25,10 +26,23 @@ from kombu.utils.eventio import READ, WRITE, ERR, poll
 
 from .timer import Timer
 
-__all__ = ['Hub', 'get_event_loop', 'set_event_loop']
+__all__ = ['Hub', 'coroutine', 'get_event_loop', 'set_event_loop']
 logger = get_logger(__name__)
 
+_UNAVAIL = frozenset([errno.EAGAIN, errno.EINTR])
+
 _current_loop = None
+
+
+def coroutine(gen):
+
+    @wraps(gen)
+    def _wind_up(*args, **kwargs):
+        it = gen(*args, **kwargs)
+        next(it)
+        return it
+
+    return _wind_up
 
 
 class Stop(BaseException):
@@ -136,6 +150,26 @@ class Hub(object):
         return '<Hub@{0:#x}: R:{1} W:{2}>'.format(
             id(self), len(self.readers), len(self.writers),
         )
+
+    def trampoline(self, fd, fun, args, coro, flags):
+        print('TRAMPOLINE %r %r %r %r' % (fd, fun, args, coro))
+        try:
+            ret = fun(*args)
+        except OSError as exc:
+            if get_errno(exc) in _UNAVAIL:
+                self.add(
+                    fd, self.trampoline, flags | ERR,
+                    (fd, fun, args, coro, flags),
+                )
+            else:
+                coro.throw(exc)
+                self.remove(fd)
+        except Exception:
+            coro.throw(exc)
+            self.remove(fd)
+        else:
+            self.add(fd, coro, flags | ERR)
+            coro.send(ret)
 
     def fire_timers(self, min_delay=1, max_delay=10, max_timers=10,
                     propagate=()):
@@ -274,6 +308,7 @@ class Hub(object):
         on_tick = self.on_tick
         todo = self._ready
         propagate = self.propagate_errors
+        trampoline = self.trampoline
 
         while 1:
             for tick_callback in on_tick:
@@ -318,16 +353,11 @@ class Hub(object):
                         continue
                     if isinstance(cb, generator):
                         try:
-                            next(cb)
-                        except OSError as exc:
-                            if get_errno(exc) != errno.EBADF:
-                                raise
-                            hub_remove(fileno)
+                            yfun, yargs = next(cb)
                         except StopIteration:
                             pass
-                        except Exception:
-                            hub_remove(fileno)
-                            raise
+                        else:
+                            trampoline(fileno, yfun, yargs, cb, event)
                     else:
                         try:
                             cb(*cbargs)
@@ -339,6 +369,15 @@ class Hub(object):
                 # no sockets yet, startup is probably not done.
                 sleep(min(poll_timeout, 0.1))
             yield
+
+    def replace(self, fd, coro, flags):
+        try:
+            fun, args = next(coro)
+        except StopIteration:
+            pass
+        else:
+            self.trampoline(fd, fun, args, coro, flags)
+
 
     def repr_active(self):
         return ', '.join(self._repr_readers() + self._repr_writers())

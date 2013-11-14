@@ -9,6 +9,7 @@ from __future__ import absolute_import
 
 import amqp
 
+from kombu.async import get_event_loop
 from kombu.five import items
 from kombu.utils.amq_manager import get_manager
 
@@ -121,6 +122,7 @@ class Transport(base.Transport):
         connection.close()
 
     def register_with_event_loop(self, connection, loop):
+        #amqp.set_event_loop(get_event_loop())
         loop.add_reader(connection.sock, self.on_readable, connection, loop)
 
     def heartbeat_check(self, connection, rate=2):
