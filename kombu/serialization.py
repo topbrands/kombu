@@ -150,6 +150,10 @@ class SerializerRegistry(object):
 
     def loads(self, data, content_type, content_encoding,
               accept=None, force=False):
+
+        if not content_type:
+            content_type = 'application/json'
+
         if accept is not None:
             if content_type not in accept:
                 raise self._for_untrusted_content(content_type, 'untrusted')
